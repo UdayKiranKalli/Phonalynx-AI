@@ -70,11 +70,13 @@ if os.getenv('FLASK_ENV') == 'production':
     # Allow your production domain
     allowed_origins = [
         "https://phonalynx.onrender.com",
-        "https://www.phonalynx.onrender.com"  # In case you have www subdomain
+        "https://www.phonalynx.onrender.com",
+        "https://localhost:5000",
+         "http://localhost:5000" # In case you have www subdomain
     ]
     CORS(app, supports_credentials=True, origins=allowed_origins)
 else:
-    CORS(app, supports_credentials=True, origins=["http://localhost:5173", "http://localhost:3000"])
+    CORS(app, supports_credentials=True, origins=["http://localhost:5173", "http://localhost:5000"])
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 JWT_SECRET = os.getenv("JWT_SECRET", "your-default-jwt-secret")
@@ -707,10 +709,6 @@ def health_check():
 def not_found(error):
     return jsonify({"error": "Route not found"}), 404
 
-@app.errorhandler(500)
-def internal_error(error):
-    logger.error(f"Internal server error: {error}")
-    return jsonify({"error": "Internal server error"}), 500
 
     
 if __name__ == '__main__':
