@@ -67,9 +67,14 @@ def serve_react_routes(path):
     return send_from_directory(app.static_folder, 'index.html')
 
 if os.getenv('FLASK_ENV') == 'production':
-    CORS(app, supports_credentials=True)  
+    # Allow your production domain
+    allowed_origins = [
+        "https://phonalynx.onrender.com",
+        "https://www.phonalynx.onrender.com"  # In case you have www subdomain
+    ]
+    CORS(app, supports_credentials=True, origins=allowed_origins)
 else:
-    CORS(app, supports_credentials=True, origins=["http://localhost:5173"])
+    CORS(app, supports_credentials=True, origins=["http://localhost:5173", "http://localhost:3000"])
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 JWT_SECRET = os.getenv("JWT_SECRET", "your-default-jwt-secret")
@@ -692,6 +697,21 @@ def upload_profile_image():
         return jsonify({"message": "Image uploaded", "profile_image": f"/profile_images/{filename}"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "healthy", "timestamp": datetime.utcnow().isoformat()}), 200
+
+# Error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({"error": "Route not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal server error: {error}")
+    return jsonify({"error": "Internal server error"}), 500
+
     
 if __name__ == '__main__':
     if os.getenv('FLASK_ENV') == 'production':
