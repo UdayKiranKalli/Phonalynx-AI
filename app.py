@@ -89,7 +89,6 @@ CORS(app,
 DATABASE_URL = os.getenv("DATABASE_URL")
 JWT_SECRET = os.getenv("JWT_SECRET", "your-default-jwt-secret")
 
-logging.getLogger("flask_cors").level = logging.DEBUG
 
 app.config.update(
     MAIL_SERVER='smtp.gmail.com',
@@ -358,7 +357,7 @@ def login():
         print("Login error:", str(e))
         return jsonify({"error": "Internal server error"}), 500
 
-@app.route("/google-login", methods=["POST"])
+app.route("/google-login", methods=["POST"])
 def google_login():
     print("🚀 Google login request received (Firebase-only)")
 
@@ -372,7 +371,7 @@ def google_login():
         print(f"✅ Firebase ID token received, length: {len(id_token_str)}")
         print("🔍 Verifying Firebase token with Admin SDK...")
 
-        # ✅ Verify Firebase ID token (no fallbacks)
+        # ✅ Verify Firebase ID token
         decoded = fb_auth.verify_id_token(id_token_str)
         email = decoded.get("email")
         name = decoded.get("name") or decoded.get("display_name") or "User"
@@ -381,7 +380,7 @@ def google_login():
         if not email:
             return jsonify({"error": "No email found in token"}), 400
 
-        # ✅ Create user in your DB if not exists
+        # ✅ Create or update user in DB
         conn = get_db_connection()
         if not conn:
             return jsonify({"error": "Database error"}), 500
@@ -399,7 +398,6 @@ def google_login():
                 conn.commit()
                 print(f"✅ User created: {email}")
             else:
-                # Optional: keep name/picture fresh
                 cur.execute(
                     "UPDATE users SET name = COALESCE(%s, name), profile_image = COALESCE(%s, profile_image) WHERE email = %s",
                     (name, picture, email)
@@ -419,16 +417,15 @@ def google_login():
             "message": "Google login successful"
         }), 200
 
-    except firebase_admin._auth_utils.InvalidIdTokenError:
-        return jsonify({"error": "Invalid Firebase token"}), 401
-    except firebase_admin._auth_utils.ExpiredIdTokenError:
+    except fb_auth.ExpiredIdTokenError:
         return jsonify({"error": "Expired Firebase token"}), 401
+    except fb_auth.InvalidIdTokenError:
+        return jsonify({"error": "Invalid Firebase token"}), 401
     except Exception as e:
         print(f"❌ Unexpected error in /google-login: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Internal server error"}), 500
-
 
 @app.route("/github-login", methods=["POST", "OPTIONS"])
 def github_login():
