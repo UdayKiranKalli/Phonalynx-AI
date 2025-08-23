@@ -140,6 +140,11 @@ try:
     elif FIREBASE_CRED_JSON:
         # Load JSON string from env → dict
         cred_dict = json.loads(FIREBASE_CRED_JSON)
+
+        # 🔑 Fix private_key newlines (important!)
+        if "private_key" in cred_dict:
+            cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+
         cred = credentials.Certificate(cred_dict)
         firebase_admin.initialize_app(cred)
         print("✅ Firebase Admin initialized from JSON env var.")
