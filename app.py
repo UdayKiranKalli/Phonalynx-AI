@@ -362,144 +362,95 @@ def login():
         print("Login error:", str(e))
         return jsonify({"error": "Internal server error"}), 500
 
-@app.route("/google-login", methods=["POST", "OPTIONS"])
+@app.route("/google-login", methods=["POST"])
 def google_login():
     print("🚀 Google login request received")
-    
+
     try:
-        data = request.get_json()
-        if not data:
-            print("❌ No JSON data received")
-            return jsonify({"error": "No data provided"}), 400
-            
-        token = data.get("token")
-        if not token:
-            print("❌ No token in request")
+        # ✅ Force JSON parsing so Flask never returns None for valid JSON
+        data = request.get_json(force=True, silent=False)
+        print("📦 Raw request JSON:", data)
+
+        if not data or "token" not in data:
+            print("❌ No token in request body")
             return jsonify({"error": "No token provided"}), 400
 
-        print(f"✅ Token received, length: {len(token)}")
+        token = data["token"]
+        print(f"✅ Firebase ID token received, length: {len(token)}")
+        print("🔍 Verifying Firebase token...")
 
-        # Google Client ID check
-        google_client_id = os.getenv("GOOGLE_CLIENT_ID")
-        print(f"🔑 Using Client ID: {google_client_id}")
-        
-        if not google_client_id:
-            print("❌ No Google Client ID in env")
-            return jsonify({"error": "Google Client ID not configured"}), 500
-
-        print("🔍 Starting token verification...")
-        
-        # Token verify cheyyi
-        idinfo = id_token.verify_oauth2_token(
-            token, 
-            grequests.Request(), 
-            google_client_id
-        )
-        
-        email = idinfo.get("email")
-        name = idinfo.get("name", "User")
-        
-        print(f"✅ Token verified successfully for: {email}")
+        # ✅ Preferred: verify with Firebase Admin SDK
+        try:
+            decoded_token = fb_auth.verify_id_token(token)
+            email = decoded_token.get("email")
+            name = decoded_token.get("name", decoded_token.get("display_name", "User"))
+            print(f"✅ Firebase Admin verification OK for: {email}")
+        except Exception as admin_error:
+            # Optional fallback (kept from your code)
+            print(f"⚠️ Firebase Admin SDK failed: {admin_error}")
+            print("🔄 Trying google.oauth2 fallback verification...")
+            try:
+                # For Firebase ID tokens, audience is the Firebase project ID
+                project_id = "phanolynx-ai"
+                idinfo = id_token.verify_oauth2_token(
+                    token,
+                    grequests.Request(),
+                    audience=project_id
+                )
+                email = idinfo.get("email")
+                name = idinfo.get("name", "User")
+                print(f"✅ google.oauth2 verification OK for: {email}")
+            except ValueError as ve:
+                print(f"❌ Both verification methods failed: {ve}")
+                return jsonify({"error": "Invalid Firebase token"}), 400
 
         if not email:
-            print("❌ No email in verified token")
-            return jsonify({"error": "No email found"}), 400
+            print("❌ Verified token has no email")
+            return jsonify({"error": "No email found in token"}), 400
 
-        # Database connection
-        print("📊 Connecting to database...")
+        # ✅ Database operations
+        print("📊 Connecting to database…")
         conn = get_db_connection()
         if not conn:
             print("❌ Database connection failed")
             return jsonify({"error": "Database error"}), 500
-            
-        cur = conn.cursor()
-        
-        # User check
-        print(f"👤 Checking if user exists: {email}")
-        cur.execute("SELECT email FROM users WHERE email=%s", (email,))
-        user = cur.fetchone()
-        
-        if not user:
-            print("➕ Creating new user...")
-            cur.execute("INSERT INTO users (name, email, password) VALUES (%s, %s, %s)",
-                        (name, email, ""))
-            conn.commit()
-            print(f"✅ User created: {email}")
-        else:
-            print(f"✅ User exists: {email}")
-        
-        cur.close()
-        conn.close()
 
-        # JWT generate
-        print("🔐 Generating JWT token...")
+        try:
+            cur = conn.cursor()
+            print(f"👤 Checking if user exists: {email}")
+            cur.execute("SELECT email FROM users WHERE email=%s", (email,))
+            user = cur.fetchone()
+
+            if not user:
+                print("➕ Creating new user…")
+                cur.execute(
+                    "INSERT INTO users (name, email, password) VALUES (%s, %s, %s)",
+                    (name, email, "")
+                )
+                conn.commit()
+                print(f"✅ User created: {email}")
+            else:
+                print(f"✅ User exists: {email}")
+        finally:
+            cur.close()
+            conn.close()
+
+        # ✅ App JWT
+        print("🔐 Generating JWT token…")
         jwt_token = generate_token(email)
-        
         print("🎉 Google login successful!")
-        
-        # Response with proper CORS headers
-        response = jsonify({
-            "token": jwt_token, 
-            "message": "Google login successful"
-        })
-        
-        # Set CORS headers for actual response
-        origin = request.headers.get('Origin')
-        allowed_origins = [
-            "http://localhost:5173", 
-            "http://localhost:5000",
-            "https://phonalynx.onrender.com",
-            "https://www.phonalynx.onrender.com"
-        ]
-        
-        if origin in allowed_origins:
-            response.headers['Access-Control-Allow-Origin'] = origin
-            
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        return response
 
-    except ValueError as ve:
-        print(f"❌ Token verification failed: {str(ve)}")
-        error_response = jsonify({"error": f"Invalid token: {str(ve)}"})
-        
-        # Add CORS headers to error response too
-        origin = request.headers.get('Origin')
-        allowed_origins = [
-            "http://localhost:5173", 
-            "http://localhost:5000",
-            "https://phonalynx.onrender.com",
-            "https://www.phonalynx.onrender.com"
-        ]
-        
-        if origin in allowed_origins:
-            error_response.headers['Access-Control-Allow-Origin'] = origin
-            error_response.headers['Access-Control-Allow-Credentials'] = 'true'
-            
-        return error_response, 400
-        
+        return jsonify({
+            "token": jwt_token,
+            "message": "Google login successful"
+        }), 200
+
     except Exception as e:
-        print(f"❌ Unexpected error: {str(e)}")
+        print(f"❌ Unexpected error in /google-login: {e}")
         import traceback
         traceback.print_exc()
-        
-        error_response = jsonify({"error": "Internal server error"})
-        
-        # Add CORS headers to error response
-        origin = request.headers.get('Origin')
-        allowed_origins = [
-            "http://localhost:5173", 
-            "http://localhost:5000",
-            "https://phonalynx.onrender.com",
-            "https://www.phonalynx.onrender.com"
-        ]
-        
-        if origin in allowed_origins:
-            error_response.headers['Access-Control-Allow-Origin'] = origin
-            error_response.headers['Access-Control-Allow-Credentials'] = 'true'
-            
-        return error_response, 500
-    
-# Replace your existing github-login route with this:
+        return jsonify({"error": "Internal server error"}), 500
+
 
 @app.route("/github-login", methods=["POST", "OPTIONS"])
 def github_login():
