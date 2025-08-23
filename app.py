@@ -357,7 +357,7 @@ def login():
         print("Login error:", str(e))
         return jsonify({"error": "Internal server error"}), 500
 
-app.route("/google-login", methods=["POST"])
+@app.route("/google-login", methods=["POST"])
 def google_login():
     print("🚀 Google login request received (Firebase-only)")
 
