@@ -10,8 +10,6 @@ from datetime import datetime, timedelta, timezone
 from flask import Flask, request, jsonify, send_from_directory , make_response
 from flask_cors import CORS , cross_origin
 from flask_mail import Mail, Message
-from google.oauth2 import id_token
-from google.auth.transport import requests as grequests
 import google.generativeai as genai
 import secrets
 import tempfile
@@ -90,8 +88,6 @@ CORS(app,
      max_age=86400)
 DATABASE_URL = os.getenv("DATABASE_URL")
 JWT_SECRET = os.getenv("JWT_SECRET", "your-default-jwt-secret")
-
-print("Allowed Origins:", allowed_origins)
 
 logging.getLogger("flask_cors").level = logging.DEBUG
 
@@ -364,79 +360,57 @@ def login():
 
 @app.route("/google-login", methods=["POST"])
 def google_login():
-    print("🚀 Google login request received")
+    print("🚀 Google login request received (Firebase-only)")
 
     try:
-        # ✅ Force JSON parsing so Flask never returns None for valid JSON
+        # Force JSON parsing
         data = request.get_json(force=True, silent=False)
-        print("📦 Raw request JSON:", data)
-
         if not data or "token" not in data:
-            print("❌ No token in request body")
             return jsonify({"error": "No token provided"}), 400
 
-        token = data["token"]
-        print(f"✅ Firebase ID token received, length: {len(token)}")
-        print("🔍 Verifying Firebase token...")
+        id_token_str = data["token"]
+        print(f"✅ Firebase ID token received, length: {len(id_token_str)}")
+        print("🔍 Verifying Firebase token with Admin SDK...")
 
-        # ✅ Preferred: verify with Firebase Admin SDK
-        try:
-            decoded_token = fb_auth.verify_id_token(token)
-            email = decoded_token.get("email")
-            name = decoded_token.get("name", decoded_token.get("display_name", "User"))
-            print(f"✅ Firebase Admin verification OK for: {email}")
-        except Exception as admin_error:
-            # Optional fallback (kept from your code)
-            print(f"⚠️ Firebase Admin SDK failed: {admin_error}")
-            print("🔄 Trying google.oauth2 fallback verification...")
-            try:
-                # For Firebase ID tokens, audience is the Firebase project ID
-                project_id = "phanolynx-ai"
-                idinfo = id_token.verify_oauth2_token(
-                    token,
-                    grequests.Request(),
-                    audience=project_id
-                )
-                email = idinfo.get("email")
-                name = idinfo.get("name", "User")
-                print(f"✅ google.oauth2 verification OK for: {email}")
-            except ValueError as ve:
-                print(f"❌ Both verification methods failed: {ve}")
-                return jsonify({"error": "Invalid Firebase token"}), 400
+        # ✅ Verify Firebase ID token (no fallbacks)
+        decoded = fb_auth.verify_id_token(id_token_str)
+        email = decoded.get("email")
+        name = decoded.get("name") or decoded.get("display_name") or "User"
+        picture = decoded.get("picture")
 
         if not email:
-            print("❌ Verified token has no email")
             return jsonify({"error": "No email found in token"}), 400
 
-        # ✅ Database operations
-        print("📊 Connecting to database…")
+        # ✅ Create user in your DB if not exists
         conn = get_db_connection()
         if not conn:
-            print("❌ Database connection failed")
             return jsonify({"error": "Database error"}), 500
 
         try:
             cur = conn.cursor()
-            print(f"👤 Checking if user exists: {email}")
             cur.execute("SELECT email FROM users WHERE email=%s", (email,))
             user = cur.fetchone()
 
             if not user:
-                print("➕ Creating new user…")
                 cur.execute(
-                    "INSERT INTO users (name, email, password) VALUES (%s, %s, %s)",
-                    (name, email, "")
+                    "INSERT INTO users (name, email, password, profile_image) VALUES (%s, %s, %s, %s)",
+                    (name, email, "", picture if picture else None)
                 )
                 conn.commit()
                 print(f"✅ User created: {email}")
             else:
-                print(f"✅ User exists: {email}")
+                # Optional: keep name/picture fresh
+                cur.execute(
+                    "UPDATE users SET name = COALESCE(%s, name), profile_image = COALESCE(%s, profile_image) WHERE email = %s",
+                    (name, picture, email)
+                )
+                conn.commit()
+                print(f"✅ User exists/updated: {email}")
         finally:
             cur.close()
             conn.close()
 
-        # ✅ App JWT
-        print("🔐 Generating JWT token…")
+        # ✅ Issue your app’s JWT
         jwt_token = generate_token(email)
         print("🎉 Google login successful!")
 
@@ -445,6 +419,10 @@ def google_login():
             "message": "Google login successful"
         }), 200
 
+    except firebase_admin._auth_utils.InvalidIdTokenError:
+        return jsonify({"error": "Invalid Firebase token"}), 401
+    except firebase_admin._auth_utils.ExpiredIdTokenError:
+        return jsonify({"error": "Expired Firebase token"}), 401
     except Exception as e:
         print(f"❌ Unexpected error in /google-login: {e}")
         import traceback
