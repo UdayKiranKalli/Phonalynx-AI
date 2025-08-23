@@ -18,10 +18,10 @@ from PIL import Image
 import pytesseract
 from docx import Document
 import firebase_admin
-from firebase_admin import credentials as fb_credentials
+from firebase_admin import credentials as credentials
 from firebase_admin import auth as fb_auth
 import time
-import logging
+
 
 print("debug token:", secrets.token_hex(16))
 
@@ -133,23 +133,20 @@ FIREBASE_CRED_JSON = os.getenv("FIREBASE_ADMIN_CRED")
 
 try:
     if FIREBASE_CRED_PATH and os.path.exists(FIREBASE_CRED_PATH):
-        cred = fb_credentials.Certificate(FIREBASE_CRED_PATH)
+        cred = credentials.Certificate(FIREBASE_CRED_PATH)
         firebase_admin.initialize_app(cred)
         print("✅ Firebase Admin initialized from file path.")
+
     elif FIREBASE_CRED_JSON:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmpf:
-            tmpf.write(FIREBASE_CRED_JSON.encode())
-            tmpf.flush()
-            tmp_path = tmpf.name
-        cred = fb_credentials.Certificate(tmp_path)
+        # Load JSON string from env → dict
+        cred_dict = json.loads(FIREBASE_CRED_JSON)
+        cred = credentials.Certificate(cred_dict)
         firebase_admin.initialize_app(cred)
-        try:
-            os.remove(tmp_path)
-        except Exception:
-            pass
         print("✅ Firebase Admin initialized from JSON env var.")
+
     else:
-        print("⚠️ Firebase Admin not initialized. Will accept Google ID tokens via google.oauth2 verification.")
+        print("⚠️ Firebase Admin not initialized. No credentials found.")
+
 except Exception as e:
     print("❌ Error initializing Firebase Admin:", str(e))
 
