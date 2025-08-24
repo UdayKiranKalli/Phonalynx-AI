@@ -631,7 +631,7 @@ def send_reset_link():
             return jsonify({"error": "No account with that email"}), 404
 
         reset_token = generate_token(email)
-        base_url = os.getenv('BASE_URL', 'http://localhost:5173')
+        base_url = os.getenv('BASE_URL')
         reset_link = f"{base_url}/reset-password?token={reset_token}"
 
         msg = Message("Reset Your Password", sender=app.config['MAIL_USERNAME'], recipients=[email])
