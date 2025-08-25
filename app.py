@@ -1,13 +1,13 @@
 import re
-import fitz  # PyMuPDF
+import fitz 
 import os
 import json
 import psycopg2
 import bcrypt
 import jwt
-import requests  # Added for GitHub OAuth
+import requests
 from datetime import datetime, timedelta, timezone
-from flask import Flask, request, jsonify, send_from_directory , make_response
+from flask import Flask, request, jsonify, send_from_directory , Response
 from flask_cors import CORS , cross_origin
 from flask_mail import Mail, Message
 import google.generativeai as genai
@@ -21,7 +21,7 @@ import firebase_admin
 from firebase_admin import credentials as credentials
 from firebase_admin import auth as fb_auth
 import time
-
+from werkzeug.utils import secure_filename
 
 print("debug token:", secrets.token_hex(16))
 
@@ -51,19 +51,30 @@ def serve_react_app():
 
 @app.route('/<path:path>')
 def serve_react_routes(path):
-    if path.startswith('api/') or path in ['register', 'login', 'google-login', 'github-login', 'evaluate', 'user-details', 'resume-history', 'update-name', 'upload-profile-image', 'forgot-password-link', 'reset-password']:
-        return None  
+    # API routes that should return 404 instead of serving React
+    api_routes = ['register', 'login', 'google-login', 'github-login', 'evaluate', 
+                  'user-details', 'resume-history', 'update-name', 'upload-profile-image', 
+                  'forgot-password-link','reset-password','health', 'change-password']
     
+    # Check if it's an API route with POST/PUT/DELETE method
+    if path in api_routes and request.method != 'GET':
+        return None  # Let Flask handle the 404
+    
+    # Special handling for GitHub OAuth callback
     if path == 'auth/github/callback':
         return send_from_directory(app.static_folder, 'index.html')
  
+    # Serve static files (JS, CSS, images, etc.)
     if '.' in path and not path.endswith('.html'):
         try:
             return send_from_directory(app.static_folder, path)
         except:
             pass
     
+    # For all other routes (including reset-password), serve the React app
+    # React Router will handle the client-side routing
     return send_from_directory(app.static_folder, 'index.html')
+
 
 if os.getenv("FLASK_ENV") == "production":
     allowed_origins = [
@@ -98,7 +109,9 @@ app.config.update(
     MAIL_PASSWORD=os.getenv("EMAIL_PASSWORD"),
 )
 mail = Mail(app)
-os.makedirs('dist/profile_images', exist_ok=True)
+UPLOAD_FOLDER = os.path.join(os.getcwd(), "profile_images")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)  # Create if not exists
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 def get_db_connection():
     try:
@@ -431,6 +444,25 @@ def google_login():
 
 @app.route("/github-login", methods=["POST", "OPTIONS"])
 def github_login():
+    # ✅ Handle preflight CORS check
+    if request.method == "OPTIONS":
+        response = jsonify({"status": "ok"})
+        origin = request.headers.get("Origin")
+        allowed_origins = [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5000",
+            "https://phonalynx.onrender.com",
+            "https://www.phonalynx.onrender.com"
+        ]
+        if origin in allowed_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response, 200
+
+    # 🚀 GitHub login request received
     print("🚀 GitHub login request received")
     
     try:
@@ -632,7 +664,7 @@ def send_reset_link():
 
         reset_token = generate_token(email)
         base_url = os.getenv('BASE_URL')
-        reset_link = f"{base_url}/reset-password?token={reset_token}"
+        reset_link = f"{base_url}/reset-password/{reset_token}"
 
         msg = Message("Reset Your Password", sender=app.config['MAIL_USERNAME'], recipients=[email])
         msg.body = f"""
@@ -654,29 +686,40 @@ Phonalynx AI
         traceback.print_exc()  # Log the error in console
         return jsonify({"error": "Internal Server Error"}), 500
 
-@app.route("/reset-password", methods=["POST"])
-def reset_password():
-    data = request.get_json()
-    token = data.get("token")
-    new_password = data.get("new_password")
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    if request.method == "GET":
+        # ✅ Just verify token (no JSON expected here)
+        email = decode_token(token)
+        if not email:
+            return jsonify({"error": "Invalid or expired token"}), 400
+        return jsonify({"message": "Valid token", "email": email}), 200
 
-    email = decode_token(token)
-    if not email:
-        return jsonify({"error": "Invalid or expired token"}), 400
+    elif request.method == "POST":
+        # ✅ Now expect JSON { "new_password": "..." }
+        data = request.get_json()
+        new_password = data.get("new_password")
 
-    hashed_pw = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+        if not new_password:
+            return jsonify({"error": "New password is required"}), 400
 
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("UPDATE users SET password=%s WHERE email=%s", (hashed_pw, email))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return jsonify({"message": "Password reset successful!"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        email = decode_token(token)
+        if not email:
+            return jsonify({"error": "Invalid or expired token"}), 400
 
+        hashed_pw = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET password=%s WHERE email=%s", (hashed_pw, email))
+            conn.commit()
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Password reset successful!"}), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
 @app.route("/evaluate", methods=["POST"])
 def evaluate_resume():
     token = request.headers.get("Authorization")
@@ -737,39 +780,7 @@ def evaluate_resume():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/user-details", methods=["GET"])
-def user_details():
-    token = request.headers.get("Authorization")
-    if not token:
-        return jsonify({"error": "Unauthorized"}), 401
 
-    email = decode_token(token)
-    if not email:
-        return jsonify({"error": "Invalid or expired token"}), 401
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT name, email, profile_image, resumes_analyzed, average_score
-            FROM users WHERE email = %s
-        """, (email,))
-        user = cur.fetchone()
-        cur.close()
-        conn.close()
-
-        if not user:
-            return jsonify({"error": "User not found"}), 404
-
-        return jsonify({
-            "name": user[0],
-            "email": user[1],
-            "profile_image": user[2],
-            "resumes_analyzed": user[3],
-            "average_score": user[4]
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 @app.route("/resume-history", methods=["GET"])
 def resume_history():
@@ -861,6 +872,7 @@ def change_password():
         print("Change password error:", str(e))
         return jsonify({"error": "Internal server error"}), 500
 
+
 @app.route("/upload-profile-image", methods=["POST"])
 def upload_profile_image():
     token = request.headers.get("Authorization")
@@ -871,26 +883,163 @@ def upload_profile_image():
     if not email:
         return jsonify({"error": "Invalid or expired token"}), 401
 
-    if 'image' not in request.files:
+    if "image" not in request.files:
         return jsonify({"error": "No image uploaded"}), 400
 
-    image = request.files['image']
-    filename = f"profile_{int(time.time())}_{image.filename}"
-    filepath = os.path.join("dist/profile_images", filename)
+    image = request.files["image"]
+    
+    # Check file type
+    allowed_extensions = {'png', 'jpg', 'jpeg', 'gif'}
+    if '.' not in image.filename or \
+       image.filename.rsplit('.', 1)[1].lower() not in allowed_extensions:
+        return jsonify({"error": "Invalid file type. Only PNG, JPG, JPEG, GIF allowed"}), 400
+
+    # Check file size (5MB max)
+    if image.content_length and image.content_length > 5 * 1024 * 1024:
+        return jsonify({"error": "Image size must be less than 5MB"}), 400
 
     try:
-        image.save(filepath)
-
         conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Database connection failed"}), 500
+            
         cur = conn.cursor()
-        cur.execute("UPDATE users SET profile_image=%s WHERE email=%s", (f"/profile_images/{filename}", email))
+        
+        # Get current profile image to delete old one
+        cur.execute("SELECT profile_image FROM users WHERE email=%s", (email,))
+        old_image_result = cur.fetchone()
+        old_image_path = old_image_result[0] if old_image_result else None
+        
+        # Delete old profile image if exists and is not an external URL
+        if old_image_path and old_image_path.startswith('/profile_images/'):
+            old_filename = old_image_path.replace('/profile_images/', '')
+            old_filepath = os.path.join(UPLOAD_FOLDER, old_filename)
+            if os.path.exists(old_filepath):
+                try:
+                    os.remove(old_filepath)
+                    print(f"Deleted old image: {old_filepath}")
+                except Exception as e:
+                    print(f"Failed to delete old image: {e}")
+
+        # Generate unique filename with timestamp
+        timestamp = int(time.time())
+        file_extension = image.filename.rsplit('.', 1)[1].lower()
+        safe_email = email.replace('@', '_').replace('.', '_')
+        filename = f"profile_{safe_email}_{timestamp}.{file_extension}"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+
+        # Ensure upload directory exists
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+        # Save image
+        image.save(filepath)
+        print(f"Saved new image: {filepath}")
+
+        # Verify file was saved correctly
+        if not os.path.exists(filepath):
+            return jsonify({"error": "Failed to save image"}), 500
+
+        # Store path in DB (consistent format)
+        db_path = f"/profile_images/{filename}"
+
+        # Update user's profile image in database
+        cur.execute("UPDATE users SET profile_image=%s WHERE email=%s", (db_path, email))
         conn.commit()
+        
+        # Verify the update was successful
+        cur.execute("SELECT profile_image FROM users WHERE email=%s", (email,))
+        updated_result = cur.fetchone()
+        
+        if not updated_result or updated_result[0] != db_path:
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Failed to update database"}), 500
+
         cur.close()
         conn.close()
 
-        return jsonify({"message": "Image uploaded", "profile_image": f"/profile_images/{filename}"})
+        return jsonify({
+            "message": "Profile image updated successfully", 
+            "profile_image": db_path,
+            "timestamp": timestamp
+        })
+    
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Profile image upload error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@app.route("/profile_images/<filename>")
+def get_profile_image(filename):
+    try:
+        # Security check - prevent directory traversal
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({"error": "Invalid filename"}), 400
+            
+        # Check if file exists
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        if not os.path.exists(filepath):
+            return jsonify({"error": "Image not found"}), 404
+            
+        response = send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+        
+        # Add proper headers to prevent aggressive caching but allow some caching
+        response.headers['Cache-Control'] = 'public, max-age=300'  # Cache for 5 minutes
+        response.headers['ETag'] = f'"{filename}-{os.path.getmtime(filepath)}"'
+        
+        return response
+    except FileNotFoundError:
+        return jsonify({"error": "Image not found"}), 404
+    except Exception as e:
+        print(f"Error serving image: {str(e)}")
+        return jsonify({"error": "Failed to load image"}), 500
+
+
+@app.route("/user-details", methods=["GET"])
+def user_details():
+    token = request.headers.get("Authorization")
+    if not token:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    email = decode_token(token)
+    if not email:
+        return jsonify({"error": "Invalid or expired token"}), 401
+
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Database connection failed"}), 500
+            
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT name, email, profile_image, resumes_analyzed, average_score
+            FROM users WHERE email = %s
+        """, (email,))
+        user = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        # Ensure consistent data format
+        user_data = {
+            "name": user[0] or "",
+            "email": user[1] or "",
+            "profile_image": user[2] or "",
+            "resumes_analyzed": user[3] or 0,
+            "average_score": user[4] or 0
+        }
+        
+        print(f"Sending user data: {user_data}")  # Debug log
+        
+        return jsonify(user_data)
+        
+    except Exception as e:
+        print(f"Error fetching user details: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
     
 @app.route("/health", methods=["GET"])
 def health_check():
