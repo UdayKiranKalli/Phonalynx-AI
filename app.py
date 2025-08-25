@@ -687,7 +687,7 @@ Phonalynx AI
         traceback.print_exc()  # Log the error in console
         return jsonify({"error": "Internal Server Error"}), 500
 
-@app.route("/reset-password/<token>", methods=["GET", "POST"])
+@app.route("/api/reset-password/<token>", methods=["GET", "POST"])
 def reset_password(token):
     if request.method == "GET":
         # ✅ Just verify token (no JSON expected here)
