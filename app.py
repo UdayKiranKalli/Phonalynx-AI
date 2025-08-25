@@ -687,24 +687,37 @@ Phonalynx AI
         traceback.print_exc()  # Log the error in console
         return jsonify({"error": "Internal Server Error"}), 500
 
-@app.route("/reset-password/<token>", methods=["GET", "POST"])
-def reset_password(token):
-    if request.method == "GET":
-        return send_from_directory(app.static_folder, 'index.html')
+@app.route('/reset-password/<token>')
+def reset_password_page(token):
+    """Serve the React app for password reset page"""
+    return send_from_directory(app.static_folder, 'index.html')
 
-    elif request.method == "POST":
-        data = request.get_json()
-        new_password = data.get("new_password")
-
-        if not new_password:
-            return jsonify({"error": "New password is required"}), 400
-
+# Add API routes that return JSON
+@app.route('/api/reset-password/<token>', methods=['GET', 'POST'])
+def api_reset_password(token):
+    """API endpoint for token validation and password reset"""
+    
+    if request.method == 'GET':
+        # Validate token
         email = decode_token(token)
         if not email:
             return jsonify({"error": "Invalid or expired token"}), 400
-
+        return jsonify({"message": "Valid token"}), 200
+    
+    elif request.method == 'POST':
+        # Reset password
+        data = request.get_json()
+        new_password = data.get("new_password")
+        
+        if not new_password:
+            return jsonify({"error": "New password is required"}), 400
+        
+        email = decode_token(token)
+        if not email:
+            return jsonify({"error": "Invalid or expired token"}), 400
+        
         hashed_pw = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
-
+        
         try:
             conn = get_db_connection()
             cur = conn.cursor()
