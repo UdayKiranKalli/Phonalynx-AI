@@ -648,6 +648,7 @@ def github_login():
             error_response.headers['Access-Control-Allow-Credentials'] = 'true'
             
         return error_response, 500
+    
 @app.route("/auth/github/callback")
 def github_callback():
     code = request.args.get("code")
