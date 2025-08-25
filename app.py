@@ -648,18 +648,7 @@ def github_login():
             error_response.headers['Access-Control-Allow-Credentials'] = 'true'
             
         return error_response, 500
-    
-@app.route("/auth/github/callback")
-def github_callback():
-    code = request.args.get("code")
-    state = request.args.get("state")
 
-    if not code:
-        return jsonify({"error": "No code received"}), 400
-
-    # Call your existing /github-login logic internally
-    with app.test_request_context("/github-login", method="POST", json={"code": code}):
-        return github_login()
 
 @app.route("/forgot-password-link", methods=["POST"])
 def send_reset_link():
