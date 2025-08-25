@@ -689,15 +689,13 @@ Phonalynx AI
 
 @app.route("/reset-password/<token>", methods=["GET", "POST"])
 def reset_password(token):
-    if request.method == "GET":
-        # ✅ Just verify token (no JSON expected here)
+    if request.method == "POST":
         email = decode_token(token)
         if not email:
             return jsonify({"error": "Invalid or expired token"}), 400
         return jsonify({"message": "Valid token", "email": email}), 200
 
     elif request.method == "POST":
-        # ✅ Now expect JSON { "new_password": "..." }
         data = request.get_json()
         new_password = data.get("new_password")
 
