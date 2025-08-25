@@ -7,7 +7,7 @@ import bcrypt
 import jwt
 import requests
 from datetime import datetime, timedelta, timezone
-from flask import Flask, request, jsonify, send_from_directory , Response
+from flask import Flask, request, jsonify, send_from_directory , Response , abort
 from flask_cors import CORS , cross_origin
 from flask_mail import Mail, Message
 import google.generativeai as genai
@@ -45,34 +45,27 @@ app = Flask(
     static_url_path=''     
 )
 
-@app.route('/')
-def serve_react_app():
-    return send_from_directory(app.static_folder, 'index.html')
-
+# Serve React App - at the very beginning after static folder setup
+@app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
-def serve_react_routes(path):
-    # API routes that should return 404 instead of serving React
-    api_routes = ['register', 'login', 'google-login', 'github-login', 'evaluate', 
-                  'user-details', 'resume-history', 'update-name', 'upload-profile-image', 
-                  'forgot-password-link','reset-password','health', 'change-password']
+def serve(path):
+    # List of Flask API endpoints that should not serve React
+    api_endpoints = [
+        'register', 'login', 'google-login', 'github-login', 
+        'evaluate', 'user-details', 'resume-history', 'update-name', 
+        'upload-profile-image', 'forgot-password-link', 'reset-password',
+        'health', 'change-password', 'profile_images'
+    ]
     
-    # Check if it's an API route with POST/PUT/DELETE method
-    if path in api_routes and request.method != 'GET':
-        return None  # Let Flask handle the 404
+    # Check if this is an API endpoint
+    if any(path.startswith(endpoint) for endpoint in api_endpoints):
+        abort(404)
     
-    # Special handling for GitHub OAuth callback
-    if path == 'auth/github/callback':
-        return send_from_directory(app.static_folder, 'index.html')
- 
-    # Serve static files (JS, CSS, images, etc.)
-    if '.' in path and not path.endswith('.html'):
-        try:
-            return send_from_directory(app.static_folder, path)
-        except:
-            pass
+    # Check if path is requesting a static file
+    if path and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
     
-    # For all other routes (including reset-password), serve the React app
-    # React Router will handle the client-side routing
+    # For all other routes, serve index.html (React Router will handle it)
     return send_from_directory(app.static_folder, 'index.html')
 
 
@@ -81,7 +74,9 @@ if os.getenv("FLASK_ENV") == "production":
         "https://phonalynx.onrender.com",
         "https://www.phonalynx.onrender.com",
         "http://localhost:5173",  
-        "http://localhost:5000"
+        "http://localhost:5000",
+        "https://phonalynx.onrender.com/auth/github/callback",
+        "https://www.phonalynx.onrender.com/auth/github/callback"
     ]
 else:
     allowed_origins = [
