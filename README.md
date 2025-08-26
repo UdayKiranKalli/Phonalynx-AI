@@ -13,25 +13,30 @@
 
 ---
 
+📌 About the Project
 ## 📌 About the Project
 **Phonalynx** is a full-stack web application built with **Flask (Python backend)** and **React (frontend)**, containerized with **Docker** and deployed on **Render**.  
 
 It demonstrates:
-- 🔐 Authentication (JWT-based + GitHub login)  
+- 🔐 Authentication (JWT-based + Google & GitHub login)  
+- 👤 User profile management (store & display user details)  
 - 📂 Resume evaluation & parsing  
 - 🐳 Dockerized deployment  
 - 🎨 React UI served through Flask (`dist/`)  
 
----
-
+✨ Features
 ## ✨ Features
-- User Authentication (Signup/Login + GitHub OAuth)  
+- User Authentication  
+  - Email/Password login  
+  - Google OAuth login  
+  - GitHub OAuth login  
+- User Profile Management (name, email, avatar, etc.)  
 - Resume Upload & Parsing (PDF/DOCX support)  
 - Secure API with Flask & JWT  
 - PostgreSQL integration  
 - React build (`dist/`) served from Flask  
 - Dockerized for easy deployment  
-- Live production deployment on Render  
+- Live production deployment on Render 
 
 ---
 
