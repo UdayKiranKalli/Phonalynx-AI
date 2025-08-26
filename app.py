@@ -436,213 +436,94 @@ def google_login():
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Internal server error"}), 500
-
-@app.route("/github-login", methods=["POST", "OPTIONS"])
-def github_login():
-    # ✅ Handle preflight CORS check
-    if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        origin = request.headers.get("Origin")
-        allowed_origins = [
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:5000",
-            "https://phonalynx.onrender.com",
-            "https://www.phonalynx.onrender.com"
-        ]
-        if origin in allowed_origins:
-            response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        return response, 200
-
-    # 🚀 GitHub login request received
-    print("🚀 GitHub login request received")
     
+# Frontend route → let React handle the page
+@app.route('/auth/github/callback')
+def github_callback_page():
+    """Serve React app for GitHub callback page"""
+    return send_from_directory(app.static_folder, 'index.html')
+
+
+# Backend API route → handle GitHub login
+@app.route("/api/github-login", methods=["POST"])
+def github_login():
+    """Handle GitHub OAuth login"""
+    data = request.get_json()
+    code = data.get("code")
+
+    if not code:
+        return jsonify({"error": "Missing GitHub code"}), 400
+
     try:
-        data = request.get_json()
-        if not data:
-            print("❌ No JSON data received")
-            return jsonify({"error": "No data provided"}), 400
-            
-        code = data.get("code")
-        if not code:
-            print("❌ No authorization code in request")
-            return jsonify({"error": "No authorization code provided"}), 400
-
-        print(f"✅ Authorization code received: {code[:10]}...")
-
-        # Check GitHub OAuth credentials
-        if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
-            print("❌ GitHub OAuth credentials not configured")
-            return jsonify({"error": "GitHub OAuth not configured"}), 500
-
-        print("🔄 Exchanging code for access token...")
-        
-        # Exchange authorization code for access token
-        token_response = requests.post('https://github.com/login/oauth/access_token', 
+        # 1. Exchange code for access token
+        headers = {"Accept": "application/json"}
+        token_res = requests.post(
+            "https://github.com/login/oauth/access_token",
+            headers=headers,
             data={
-                'client_id': GITHUB_CLIENT_ID,
-                'client_secret': GITHUB_CLIENT_SECRET,
-                'code': code
+                "client_id": GITHUB_CLIENT_ID,
+                "client_secret": GITHUB_CLIENT_SECRET,
+                "code": code,
             },
-            headers={
-                'Accept': 'application/json',
-                'User-Agent': 'Phonalynx-App'
-            },
-            timeout=10
         )
-        
-        if not token_response.ok:
-            print(f"❌ GitHub token exchange failed: {token_response.status_code}")
-            return jsonify({"error": "Failed to exchange code for token"}), 400
-            
-        token_data = token_response.json()
-        access_token = token_data.get('access_token')
-        
+        token_res.raise_for_status()
+        token_json = token_res.json()
+        access_token = token_json.get("access_token")
+
         if not access_token:
-            print(f"❌ No access token received: {token_data}")
-            return jsonify({"error": "No access token received from GitHub"}), 400
+            return jsonify({"error": "GitHub login failed"}), 400
 
-        print("✅ Access token received, fetching user data...")
-        
-        # Get user information from GitHub
-        user_response = requests.get('https://api.github.com/user',
-            headers={
-                'Authorization': f'token {access_token}',
-                'Accept': 'application/json',
-                'User-Agent': 'Phonalynx-App'
-            },
-            timeout=10
+        # 2. Fetch user info
+        user_res = requests.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"token {access_token}"}
         )
-        
-        if not user_response.ok:
-            print(f"❌ GitHub user data fetch failed: {user_response.status_code}")
-            return jsonify({"error": "Failed to fetch user data from GitHub"}), 400
-            
-        user_data = user_response.json()
-        
-        # Get user email (might be private)
-        email = user_data.get('email')
-        if not email:
-            # Try to get email from separate endpoint
-            email_response = requests.get('https://api.github.com/user/emails',
-                headers={
-                    'Authorization': f'token {access_token}',
-                    'Accept': 'application/json',
-                    'User-Agent': 'Phonalynx-App'
-                },
-                timeout=10
-            )
-            
-            if email_response.ok:
-                emails = email_response.json()
-                # Get primary email
-                primary_email = next((e['email'] for e in emails if e['primary']), None)
-                if primary_email:
-                    email = primary_email
-                elif emails:
-                    email = emails[0]['email']
-        
-        if not email:
-            print("❌ No email found in GitHub account")
-            return jsonify({"error": "No email associated with GitHub account"}), 400
-            
-        name = user_data.get('name') or user_data.get('login') or 'GitHub User'
-        
-        print(f"✅ User data retrieved: {email}, {name}")
+        user_res.raise_for_status()
+        user_data = user_res.json()
 
-        # Database operations
-        print("📊 Connecting to database...")
+        email = user_data.get("email")
+        if not email:
+            # fallback to user/emails
+            emails_res = requests.get(
+                "https://api.github.com/user/emails",
+                headers={"Authorization": f"token {access_token}"}
+            )
+            emails_res.raise_for_status()
+            emails = emails_res.json()
+            primary_email = next((e["email"] for e in emails if e["primary"]), None)
+            email = primary_email or (emails[0]["email"] if emails else None)
+
+        if not email:
+            return jsonify({"error": "No email found in GitHub account"}), 400
+
+        # 3. Create or update user in DB
         conn = get_db_connection()
-        if not conn:
-            print("❌ Database connection failed")
-            return jsonify({"error": "Database error"}), 500
-            
         cur = conn.cursor()
-        
-        # Check if user exists
-        print(f"👤 Checking if user exists: {email}")
-        cur.execute("SELECT email FROM users WHERE email=%s", (email,))
+        cur.execute("SELECT id FROM users WHERE email=%s", (email,))
         user = cur.fetchone()
-        
         if not user:
-            print("➕ Creating new user...")
-            cur.execute("INSERT INTO users (name, email, password) VALUES (%s, %s, %s)",
-                        (name, email, ""))
-            conn.commit()
-            print(f"✅ User created: {email}")
+            cur.execute(
+                "INSERT INTO users (email, provider) VALUES (%s, %s) RETURNING id",
+                (email, "github")
+            )
+            user_id = cur.fetchone()[0]
         else:
-            print(f"✅ User exists: {email}")
-        
+            user_id = user[0]
+        conn.commit()
         cur.close()
         conn.close()
 
-        # Generate JWT token
-        print("🔐 Generating JWT token...")
-        jwt_token = generate_token(email)
-        
-        print("🎉 GitHub login successful!")
-        
-        # Response with proper CORS headers
-        response = jsonify({
-            "token": jwt_token, 
-            "message": "GitHub login successful"
-        })
-        
-        origin = request.headers.get('Origin')
-        allowed_origins = [
-            "http://localhost:5173", 
-            "http://localhost:5000",
-            "https://phonalynx.onrender.com",
-            "https://www.phonalynx.onrender.com"
-        ]
-        
-        if origin in allowed_origins:
-            response.headers['Access-Control-Allow-Origin'] = origin
-            
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        return response
+        # 4. Generate JWT
+        token = jwt.encode(
+            {"email": email, "exp": datetime.utcnow() + timedelta(hours=24)},
+            JWT_SECRET,
+            algorithm="HS256"
+        )
 
-    except requests.RequestException as e:
-        print(f"❌ Network error with GitHub API: {str(e)}")
-        error_response = jsonify({"error": "Network error with GitHub"})
-        
-        origin = request.headers.get('Origin')
-        allowed_origins = [
-            "http://localhost:5173", 
-            "http://localhost:5000",
-            "https://phonalynx.onrender.com",
-            "https://www.phonalynx.onrender.com"
-        ]
-        
-        if origin in allowed_origins:
-            error_response.headers['Access-Control-Allow-Origin'] = origin
-            error_response.headers['Access-Control-Allow-Credentials'] = 'true'
-            
-        return error_response, 500
-        
+        return jsonify({"token": token, "email": email}), 200
+
     except Exception as e:
-        print(f"❌ Unexpected error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        
-        error_response = jsonify({"error": "Internal server error"})
-        
-        origin = request.headers.get('Origin')
-        allowed_origins = [
-            "http://localhost:5173", 
-            "http://localhost:5000",
-            "https://phonalynx.onrender.com",
-            "https://www.phonalynx.onrender.com"
-        ]
-        
-        if origin in allowed_origins:
-            error_response.headers['Access-Control-Allow-Origin'] = origin
-            error_response.headers['Access-Control-Allow-Credentials'] = 'true'
-            
-        return error_response, 500
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/forgot-password-link", methods=["POST"])
