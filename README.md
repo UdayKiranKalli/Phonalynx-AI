@@ -50,7 +50,7 @@ It demonstrates:
 ---
 
 ## 📷 Screenshots / Demo
-![Demo Screenshot](dist/assets/demo.mp4)  
+![Demo Screenshot](dist/assets/demo.png)  
  
 
 ---
