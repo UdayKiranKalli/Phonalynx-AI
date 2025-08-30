@@ -50,8 +50,8 @@ It demonstrates:
 ---
 
 ## 📷 Screenshots / Demo
-![Demo Screenshot](docs/demo.png)  
-*(Or add your demo video/GIF here)*  
+![Demo Screenshot](dist/assets/demo.mp4)  
+ 
 
 ---
 
@@ -136,6 +136,4 @@ Edit
 ---
 
 ✅ This version is **aligned with your structure** (`dist/` being served by Flask).  
-If you like, I can also **create a small project logo/banner** (like "Phonalynx — Flask + React + Docker") for your GitHub top section so it looks even more professional.  
 
-Want me to design one for you?
